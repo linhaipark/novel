@@ -2,9 +2,9 @@ from _datetime import datetime
 from flask import Flask, render_template, flash, redirect, url_for
 from werkzeug.security import generate_password_hash
 from app import app, db
-from app.forms import LoginForm, RegistrationForm, EditProfileForm
+from app.forms import LoginForm, RegistrationForm, EditProfileForm, PostForm
 from flask_login import current_user, login_user, logout_user, login_required
-from app.models import User
+from app.models import User, Post
 from flask import request
 from werkzeug.urls import url_parse
 
@@ -12,21 +12,20 @@ from werkzeug.urls import url_parse
 # app = Flask(__name__)
 
 @app.route('/')
-@app.route('/index')
+@app.route('/index', methods=['GET', 'POST'])
 @login_required
 def index():
+    form = PostForm()
+    if form.validate_on_submit():
+        post = Post(body=form.post.data, author=current_user)
+        db.session.add(post)
+        db.session.commit()
+        flash('Your post is now live!')
+        return redirect(url_for('index'))
     user = {'username': 'Miguel'}
-    posts = [
-        {
-            'author': {'username': 'John'},
-            'body': 'Beautiful day in Portland!'
-        },
-        {
-            'author': {'username': 'Susan'},
-            'body': 'The Avengers movie was so cool!'
-        }
-    ]
-    return render_template('index.html', title='Home', user=user, posts=posts, current_user=current_user)
+    posts = current_user.followed_posts().all()
+    return render_template("index.html", title='Home Page', form=form, posts=posts)
+    # return render_template('index.html', title='Home', user=user, posts=posts, current_user=current_user)
 
 
 @app.route('/login', methods=['GET', 'POST'])
@@ -114,7 +113,7 @@ def follow(username):
         flash('You cannot follow yourself!')
         return redirect(url_for('user', username=username))
     current_user.follow(user)
-    db.session.commit
+    db.session.commit()
     flash('You are following {}'.format(username))
     return redirect(url_for('user', username=username))
 
@@ -130,9 +129,16 @@ def unfollow(username):
         flash('You cannot unfollow yourself!')
         return redirect(url_for('user', username=username))
     current_user.unfollow(user)
-    db.session.commit
+    db.session.commit()
     flash('You are not following {}.'.format(username))
     return redirect(url_for('user', username=username))
+
+
+@app.route('/explore')
+@login_required
+def explore():
+    posts = Post.query.order_by(Post.timestamp.desc()).all()
+    return render_template('index.html', title='Explore', posts=posts)
 
 
 app.run(debug=True)
