@@ -1,12 +1,15 @@
 from _datetime import datetime
 from flask import Flask, render_template, flash, redirect, url_for
+from flask_mail import Message
 from werkzeug.security import generate_password_hash
-from app import app, db
-from app.forms import LoginForm, RegistrationForm, EditProfileForm, PostForm
+from app import app, db, mail
+from app.forms import LoginForm, RegistrationForm, EditProfileForm, PostForm, \
+     ResetPasswordRequestForm, ResetPasswordForm
 from flask_login import current_user, login_user, logout_user, login_required
 from app.models import User, Post
 from flask import request
 from werkzeug.urls import url_parse
+from app.myemail import send_password_reset_email
 
 
 # app = Flask(__name__)
@@ -22,9 +25,13 @@ def index():
         db.session.commit()
         flash('Your post is now live!')
         return redirect(url_for('index'))
-    user = {'username': 'Miguel'}
-    posts = current_user.followed_posts().all()
-    return render_template("index.html", title='Home Page', form=form, posts=posts)
+    # user = {'username': 'Miguel'}
+    page = request.args.get('page', 1, type=int)
+    posts = current_user.followed_posts().paginate(page, app.config['POSTS_PER_PAGE'], False)
+    next_url = url_for('index', page=posts.next_num) if posts.has_next else None
+    prev_url = url_for('index', page=posts.prev_num) if posts.has_prev else None
+    return render_template("index.html", title='Home Page', form=form, posts=posts.items,
+                           next_url=next_url, prev_url=prev_url)
     # return render_template('index.html', title='Home', user=user, posts=posts, current_user=current_user)
 
 
@@ -72,11 +79,13 @@ def register():
 @login_required
 def user(username):
     user = User.query.filter_by(username=username).first_or_404()
-    posts = [
-        {'author': user, 'body': 'Test post #1'},
-        {'author': user, 'body': 'Test post #2'}
-    ]
-    return render_template('user.html', user=user, posts=posts)
+    page = request.args.get('page', 1, type=int)
+    posts = user.posts.order_by(Post.timestamp.desc()).paginate(
+        page, app.config['POSTS_PER_PAGE'], False)
+    next_url = url_for('user', username=user.username, page=posts.next_num) if posts.has_next else None
+    prev_url = url_for('user', username=user.username, page=posts.prev_num) if posts.has_prev else None
+    return render_template('user.html', user=user, posts=posts.items,
+                           next_url=next_url, prev_url=prev_url)
 
 
 @app.before_request
@@ -134,11 +143,55 @@ def unfollow(username):
     return redirect(url_for('user', username=username))
 
 
+# 广场
 @app.route('/explore')
 @login_required
 def explore():
-    posts = Post.query.order_by(Post.timestamp.desc()).all()
-    return render_template('index.html', title='Explore', posts=posts)
+    page = request.args.get('page', 1, type=int)
+    posts = Post.query.order_by(Post.timestamp.desc()).paginate(
+        page, app.config['POSTS_PER_PAGE'], False)
+    next_url = url_for('explore', page=posts.next_num) if posts.has_next else None
+    prev_url = url_for('explore', page=posts.prev_num) if posts.has_prev else None
+    return render_template("index.html", title='Explore', posts=posts.items,
+                          next_url=next_url, prev_url=prev_url)
+
+
+@app.route('/reset_password_request', methods=['GET', 'POST'])
+def reset_password_request():
+    if current_user.is_authenticated:
+        return redirect(url_for('index'))
+    form = ResetPasswordRequestForm()
+    if form.validate_on_submit():
+        user = User.query.filter_by(email=form.email.data).first()
+        if user:
+            send_password_reset_email(user)
+        flash('Check your email for the instructions to reset your password')
+        return redirect(url_for('login'))
+    return render_template('reset_password_request.html',
+                           title='Reset Password', form=form)
+
+
+@app.route('/reset_password/<token>', methods=['GET', 'POST'])
+def reset_password(token):
+    if current_user.is_authenticated:
+        return redirect(url_for('index'))
+    user = User.verify_reset_password_token(token)
+    if not user:
+        return redirect(url_for('index'))
+    form = ResetPasswordForm()
+    if form.validate_on_submit():
+        user.set_password(form.password.data)
+        db.session.commit()
+        flash('Your password has been reset.')
+        return redirect(url_for('login'))
+    return render_template('reset_password.html', form=form)
+
+
+@app.route('/email_send')
+def email_send():
+    m = Message('test', sender=app.config['ADMINS'][0], recipients=['1632141075@qq.com'], body='hello')
+    mail.send(m)
+    return 'success!'
 
 
 app.run(debug=True)
