@@ -1,3 +1,4 @@
+PyJWT
 at==0.0.3
 Click==7.0
 decorator==4.4.0
